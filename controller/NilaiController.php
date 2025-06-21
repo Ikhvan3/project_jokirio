@@ -2,20 +2,25 @@
 require_once './model/NilaiModel.php';
 require_once './model/MahasiswaModel.php';
 require_once './model/MataKuliahModel.php';
-require_once './config/db.php';
+require_once './config/auth/auth.php';
 
 class NilaiController
 {
     private $nilaiModel;
     private $mahasiswaModel;
     private $mataKuliahModel;
+    private $auth;
 
     public function __construct()
     {
-        global $conn;
+        global $conn, $auth;
         $this->nilaiModel = new NilaiModel($conn);
-        $this->mahasiswaModel = new MahasiswaModel($conn);
+        $this->mahasiswaModel = new Mahasiswa($conn);
         $this->mataKuliahModel = new MataKuliahModel($conn);
+        $this->auth = $auth;
+
+        // Pastikan user sudah login
+        $this->auth->requireLogin();
     }
 
     public function index()
@@ -24,9 +29,11 @@ class NilaiController
         $limit = 10;
         $offset = ($page - 1) * $limit;
         $search = isset($_GET['search']) ? trim($_GET['search']) : '';
+        $jurusan = isset($_GET['jurusan']) ? trim($_GET['jurusan']) : '';
+        $semester = isset($_GET['semester']) ? (int)$_GET['semester'] : null;
 
-        $nilai = $this->nilaiModel->getAllNilai($limit, $offset, $search);
-        $total = $this->nilaiModel->getTotalNilai($search);
+        $nilai = $this->nilaiModel->getAllNilai($limit, $offset, $search, $jurusan, $semester);
+        $total = $this->nilaiModel->getTotalNilai($search, $jurusan, $semester);
         $totalPages = ceil($total / $limit);
 
         // Get data untuk dropdown
@@ -53,9 +60,7 @@ class NilaiController
         $data = [
             'mahasiswa_id' => $_POST['mahasiswa_id'] ?? '',
             'mata_kuliah_id' => $_POST['mata_kuliah_id'] ?? '',
-            'nilai' => $_POST['nilai'] ?? '',
-            'semester' => $_POST['semester'] ?? '',
-            'tahun_akademik' => $_POST['tahun_akademik'] ?? ''
+            'nilai' => $_POST['nilai'] ?? ''
         ];
 
         // Validasi
@@ -66,9 +71,6 @@ class NilaiController
             $this->redirect('index.php?controller=nilai&action=create');
             return;
         }
-
-        // Hitung grade berdasarkan nilai
-        $data['grade'] = $this->calculateGrade($data['nilai']);
 
         $result = $this->nilaiModel->createNilai($data);
 
@@ -106,22 +108,17 @@ class NilaiController
         $data = [
             'mahasiswa_id' => $_POST['mahasiswa_id'] ?? '',
             'mata_kuliah_id' => $_POST['mata_kuliah_id'] ?? '',
-            'nilai' => $_POST['nilai'] ?? '',
-            'semester' => $_POST['semester'] ?? '',
-            'tahun_akademik' => $_POST['tahun_akademik'] ?? ''
+            'nilai' => $_POST['nilai'] ?? ''
         ];
 
         // Validasi
-        $errors = $this->validateNilai($data);
+        $errors = $this->validateNilai($data, $id);
         if (!empty($errors)) {
             $_SESSION['errors'] = $errors;
             $_SESSION['old_data'] = $data;
             $this->redirect('index.php?controller=nilai&action=edit&id=' . $id);
             return;
         }
-
-        // Hitung grade berdasarkan nilai
-        $data['grade'] = $this->calculateGrade($data['nilai']);
 
         $result = $this->nilaiModel->updateNilai($id, $data);
 
@@ -150,6 +147,8 @@ class NilaiController
     // AJAX Methods
     public function searchAjax()
     {
+        header('Content-Type: application/json');
+
         if (!isset($_GET['search'])) {
             echo json_encode(['error' => 'Parameter search tidak ditemukan']);
             return;
@@ -159,9 +158,11 @@ class NilaiController
         $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
         $limit = 10;
         $offset = ($page - 1) * $limit;
+        $jurusan = isset($_GET['jurusan']) ? trim($_GET['jurusan']) : '';
+        $semester = isset($_GET['semester']) ? (int)$_GET['semester'] : null;
 
-        $nilai = $this->nilaiModel->getAllNilai($limit, $offset, $search);
-        $total = $this->nilaiModel->getTotalNilai($search);
+        $nilai = $this->nilaiModel->getAllNilai($limit, $offset, $search, $jurusan, $semester);
+        $total = $this->nilaiModel->getTotalNilai($search, $jurusan, $semester);
 
         $response = [
             'data' => $nilai,
@@ -170,12 +171,28 @@ class NilaiController
             'totalPages' => ceil($total / $limit)
         ];
 
-        header('Content-Type: application/json');
         echo json_encode($response);
+    }
+
+    public function liveSearch()
+    {
+        header('Content-Type: application/json');
+
+        if (!isset($_GET['q'])) {
+            echo json_encode(['error' => 'Parameter q tidak ditemukan']);
+            return;
+        }
+
+        $query = trim($_GET['q']);
+        $hasil = $this->nilaiModel->searchLive($query);
+
+        echo json_encode($hasil);
     }
 
     public function getMahasiswaByJurusan()
     {
+        header('Content-Type: application/json');
+
         if (!isset($_GET['jurusan'])) {
             echo json_encode(['error' => 'Parameter jurusan tidak ditemukan']);
             return;
@@ -184,20 +201,33 @@ class NilaiController
         $jurusan = $_GET['jurusan'];
         $mahasiswa = $this->mahasiswaModel->getMahasiswaByJurusan($jurusan);
 
-        header('Content-Type: application/json');
         echo json_encode($mahasiswa);
     }
 
     public function getNilaiByMahasiswa($mahasiswaId)
     {
-        $nilai = $this->nilaiModel->getNilaiByMahasiswaId($mahasiswaId);
-
         header('Content-Type: application/json');
+        $nilai = $this->nilaiModel->getNilaiByMahasiswa($mahasiswaId);
         echo json_encode($nilai);
     }
 
+    public function getStatistik()
+    {
+        header('Content-Type: application/json');
+        $stats = $this->nilaiModel->getStatistikNilai();
+        echo json_encode($stats);
+    }
+
+    public function getRanking()
+    {
+        header('Content-Type: application/json');
+        $jurusan = isset($_GET['jurusan']) ? $_GET['jurusan'] : null;
+        $ranking = $this->nilaiModel->getRankingMahasiswa($jurusan);
+        echo json_encode($ranking);
+    }
+
     // Helper Methods
-    private function validateNilai($data)
+    private function validateNilai($data, $excludeId = null)
     {
         $errors = [];
 
@@ -215,38 +245,10 @@ class NilaiController
             $errors[] = 'Nilai harus berupa angka antara 0-100';
         }
 
-        if (empty($data['semester'])) {
-            $errors[] = 'Semester harus dipilih';
-        }
-
-        if (empty($data['tahun_akademik'])) {
-            $errors[] = 'Tahun akademik harus diisi';
-        }
-
-        // Cek duplikasi nilai
-        if (!empty($data['mahasiswa_id']) && !empty($data['mata_kuliah_id'])) {
-            $existing = $this->nilaiModel->checkDuplicateNilai(
-                $data['mahasiswa_id'],
-                $data['mata_kuliah_id'],
-                $data['semester'],
-                $data['tahun_akademik']
-            );
-
-            if ($existing) {
-                $errors[] = 'Nilai untuk mahasiswa dan mata kuliah ini sudah ada di semester dan tahun akademik yang sama';
-            }
-        }
+        // Cek duplikasi nilai (sudah ada di model)
+        // Model akan handle duplikasi check
 
         return $errors;
-    }
-
-    private function calculateGrade($nilai)
-    {
-        if ($nilai >= 80) return 'A';
-        if ($nilai >= 70) return 'B';
-        if ($nilai >= 60) return 'C';
-        if ($nilai >= 50) return 'D';
-        return 'E';
     }
 
     private function redirect($url)
@@ -265,8 +267,8 @@ class NilaiController
             return;
         }
 
-        $nilai = $this->nilaiModel->getNilaiByMahasiswaId($mahasiswaId);
-        $ipk = $this->nilaiModel->calculateIPK($mahasiswaId);
+        $transkrip = $this->nilaiModel->getTranskrip($mahasiswaId);
+        $ipkData = $this->nilaiModel->getIPKMahasiswa($mahasiswaId);
 
         include './view/nilai/transkrip.php';
     }
