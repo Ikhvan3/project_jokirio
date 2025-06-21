@@ -13,7 +13,7 @@ class Mahasiswa
         return self::$conn;
     }
 
-    public static function getAll($limit = null, $offset = null, $search = null)
+    public static function getAllMahasiswa($limit = null, $offset = null, $search = null)
     {
         $conn = self::getConnection();
         $sql = "SELECT m.*, 
@@ -59,6 +59,18 @@ class Mahasiswa
         }
 
         $stmt->close();
+        return $mahasiswa;
+    }
+
+    public function getMahasiswaById($id)
+    {
+        $stmt = $this->conn->prepare("SELECT * FROM mahasiswa WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $mahasiswa = $result->fetch_assoc();
+        $stmt->close();
+
         return $mahasiswa;
     }
 
@@ -286,5 +298,37 @@ class Mahasiswa
         $stats['rata_ipk'] = round($result->fetch_assoc()['rata_ipk'] ?? 0, 2);
 
         return $stats;
+    }
+
+    public function getMahasiswaByJurusan($jurusan)
+    {
+        $stmt = $this->conn->prepare("SELECT * FROM mahasiswa WHERE jurusan = ? AND status = 'active' ORDER BY nim ASC");
+        $stmt->bind_param("s", $jurusan);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $mahasiswa = [];
+
+        while ($row = $result->fetch_assoc()) {
+            $mahasiswa[] = $row;
+        }
+
+        $stmt->close();
+        return $mahasiswa;
+    }
+
+    public function getMahasiswaByAngkatan($angkatan)
+    {
+        $stmt = $this->conn->prepare("SELECT * FROM mahasiswa WHERE angkatan = ? AND status = 'active' ORDER BY nim ASC");
+        $stmt->bind_param("i", $angkatan);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $mahasiswa = [];
+
+        while ($row = $result->fetch_assoc()) {
+            $mahasiswa[] = $row;
+        }
+
+        $stmt->close();
+        return $mahasiswa;
     }
 }

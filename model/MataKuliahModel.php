@@ -18,7 +18,7 @@ class MataKuliahModel
         $types = "";
 
         if ($search) {
-            $sql .= " WHERE (kode_mata_kuliah LIKE ? OR nama_mata_kuliah LIKE ? OR dosen_pengampu LIKE ?)";
+            $sql .= " WHERE (kode_mata_kuliah LIKE ? OR nama_mata_kuliah LIKE ? OR jurusan LIKE ?)";
             $searchParam = "%$search%";
             $params = [$searchParam, $searchParam, $searchParam];
             $types = "sss";
@@ -31,7 +31,7 @@ class MataKuliahModel
             $params[] = $limit;
             $types .= "i";
 
-            if ($offset) {
+            if ($offset !== null) {
                 $sql .= " OFFSET ?";
                 $params[] = $offset;
                 $types .= "i";
@@ -83,15 +83,16 @@ class MataKuliahModel
             }
             $stmt->close();
 
-            $stmt = $this->conn->prepare("INSERT INTO mata_kuliah (kode_mata_kuliah, nama_mata_kuliah, sks, semester, dosen_pengampu, deskripsi) VALUES (?, ?, ?, ?, ?, ?)");
+            $stmt = $this->conn->prepare("INSERT INTO mata_kuliah (kode_mata_kuliah, nama_mata_kuliah, sks, semester, jurusan, deskripsi, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())");
             $stmt->bind_param(
-                "ssiiss",
+                "ssiisss",
                 $data['kode_mata_kuliah'],
                 $data['nama_mata_kuliah'],
                 $data['sks'],
                 $data['semester'],
-                $data['dosen_pengampu'],
-                $data['deskripsi'] ?? null
+                $data['jurusan'],
+                $data['deskripsi'] ?? null,
+                $data['status'] ?? 'active'
             );
 
             if ($stmt->execute()) {
@@ -122,15 +123,16 @@ class MataKuliahModel
             }
             $stmt->close();
 
-            $stmt = $this->conn->prepare("UPDATE mata_kuliah SET kode_mata_kuliah = ?, nama_mata_kuliah = ?, sks = ?, semester = ?, dosen_pengampu = ?, deskripsi = ? WHERE id = ?");
+            $stmt = $this->conn->prepare("UPDATE mata_kuliah SET kode_mata_kuliah = ?, nama_mata_kuliah = ?, sks = ?, semester = ?, jurusan = ?, deskripsi = ?, status = ?, updated_at = NOW() WHERE id = ?");
             $stmt->bind_param(
-                "ssiissi",
+                "ssiisssi",
                 $data['kode_mata_kuliah'],
                 $data['nama_mata_kuliah'],
                 $data['sks'],
                 $data['semester'],
-                $data['dosen_pengampu'],
+                $data['jurusan'],
                 $data['deskripsi'] ?? null,
+                $data['status'] ?? 'active',
                 $id
             );
 
@@ -149,18 +151,6 @@ class MataKuliahModel
     public function deleteMataKuliah($id)
     {
         try {
-            // Check if mata kuliah is used in nilai
-            $stmt = $this->conn->prepare("SELECT id FROM nilai WHERE mata_kuliah_id = ?");
-            $stmt->bind_param("i", $id);
-            $stmt->execute();
-            $result = $stmt->get_result();
-
-            if ($result->num_rows > 0) {
-                $stmt->close();
-                return ['success' => false, 'message' => 'Mata kuliah tidak dapat dihapus karena masih digunakan dalam data nilai'];
-            }
-            $stmt->close();
-
             $stmt = $this->conn->prepare("DELETE FROM mata_kuliah WHERE id = ?");
             $stmt->bind_param("i", $id);
 
@@ -181,7 +171,7 @@ class MataKuliahModel
         $sql = "SELECT COUNT(*) as total FROM mata_kuliah";
 
         if ($search) {
-            $sql .= " WHERE (kode_mata_kuliah LIKE ? OR nama_mata_kuliah LIKE ? OR dosen_pengampu LIKE ?)";
+            $sql .= " WHERE (kode_mata_kuliah LIKE ? OR nama_mata_kuliah LIKE ? OR jurusan LIKE ?)";
             $searchParam = "%$search%";
 
             $stmt = $this->conn->prepare($sql);
@@ -198,10 +188,10 @@ class MataKuliahModel
         return $total;
     }
 
-    public function getMataKuliahByDosen($dosenName)
+    public function getMataKuliahByJurusan($jurusan)
     {
-        $stmt = $this->conn->prepare("SELECT * FROM mata_kuliah WHERE dosen_pengampu = ? ORDER BY kode_mata_kuliah ASC");
-        $stmt->bind_param("s", $dosenName);
+        $stmt = $this->conn->prepare("SELECT * FROM mata_kuliah WHERE jurusan = ? AND status = 'active' ORDER BY semester ASC, kode_mata_kuliah ASC");
+        $stmt->bind_param("s", $jurusan);
         $stmt->execute();
         $result = $stmt->get_result();
         $mataKuliah = [];
@@ -214,10 +204,16 @@ class MataKuliahModel
         return $mataKuliah;
     }
 
-    public function getMataKuliahBySemester($semester)
+    public function getMataKuliahBySemester($semester, $jurusan = '')
     {
-        $stmt = $this->conn->prepare("SELECT * FROM mata_kuliah WHERE semester = ? ORDER BY kode_mata_kuliah ASC");
-        $stmt->bind_param("i", $semester);
+        if ($jurusan) {
+            $stmt = $this->conn->prepare("SELECT * FROM mata_kuliah WHERE semester = ? AND jurusan = ? AND status = 'active' ORDER BY kode_mata_kuliah ASC");
+            $stmt->bind_param("is", $semester, $jurusan);
+        } else {
+            $stmt = $this->conn->prepare("SELECT * FROM mata_kuliah WHERE semester = ? AND status = 'active' ORDER BY kode_mata_kuliah ASC");
+            $stmt->bind_param("i", $semester);
+        }
+
         $stmt->execute();
         $result = $stmt->get_result();
         $mataKuliah = [];
@@ -252,29 +248,155 @@ class MataKuliahModel
         return $exists;
     }
 
-    public function getStatistics()
+    public function checkMataKuliahUsage($id)
     {
-        $stats = [];
+        $stmt = $this->conn->prepare("SELECT id FROM nilai WHERE mata_kuliah_id = ? LIMIT 1");
+        $stmt->bind_param("i", $id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $isUsed = $result->num_rows > 0;
+        $stmt->close();
 
-        // Total mata kuliah
-        $result = $this->conn->query("SELECT COUNT(*) as total FROM mata_kuliah");
-        $stats['total'] = $result->fetch_assoc()['total'];
+        return $isUsed;
+    }
 
-        // Total SKS
-        $result = $this->conn->query("SELECT SUM(sks) as total_sks FROM mata_kuliah");
-        $stats['total_sks'] = $result->fetch_assoc()['total_sks'] ?? 0;
+    public function getMahasiswaByMataKuliah($mataKuliahId)
+    {
+        $stmt = $this->conn->prepare("
+            SELECT m.id, m.nim, m.nama, m.jurusan, n.nilai, n.grade, n.created_at
+            FROM mahasiswa m
+            JOIN nilai n ON m.id = n.mahasiswa_id
+            WHERE n.mata_kuliah_id = ?
+            ORDER BY m.nim ASC
+        ");
+        $stmt->bind_param("i", $mataKuliahId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $mahasiswa = [];
 
-        // Mata kuliah per semester
-        $result = $this->conn->query("SELECT semester, COUNT(*) as jumlah FROM mata_kuliah GROUP BY semester ORDER BY semester");
-        $stats['per_semester'] = [];
         while ($row = $result->fetch_assoc()) {
-            $stats['per_semester'][$row['semester']] = $row['jumlah'];
+            $mahasiswa[] = $row;
         }
 
-        // Dosen pengampu
-        $result = $this->conn->query("SELECT COUNT(DISTINCT dosen_pengampu) as total_dosen FROM mata_kuliah WHERE dosen_pengampu IS NOT NULL");
-        $stats['total_dosen'] = $result->fetch_assoc()['total_dosen'];
+        $stmt->close();
+        return $mahasiswa;
+    }
 
+    // Statistik methods untuk controller
+    public function getMataKuliahPerJurusan()
+    {
+        $stmt = $this->conn->prepare("
+            SELECT jurusan, COUNT(*) as jumlah 
+            FROM mata_kuliah 
+            WHERE status = 'active' 
+            GROUP BY jurusan 
+            ORDER BY jurusan ASC
+        ");
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $stats = [];
+
+        while ($row = $result->fetch_assoc()) {
+            $stats[] = $row;
+        }
+
+        $stmt->close();
         return $stats;
+    }
+
+    public function getMataKuliahPerSemester()
+    {
+        $stmt = $this->conn->prepare("
+            SELECT semester, COUNT(*) as jumlah 
+            FROM mata_kuliah 
+            WHERE status = 'active' 
+            GROUP BY semester 
+            ORDER BY semester ASC
+        ");
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $stats = [];
+
+        while ($row = $result->fetch_assoc()) {
+            $stats[] = $row;
+        }
+
+        $stmt->close();
+        return $stats;
+    }
+
+    public function getRataRataSKS()
+    {
+        $stmt = $this->conn->prepare("SELECT AVG(sks) as rata_sks FROM mata_kuliah WHERE status = 'active'");
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $avg = $result->fetch_assoc()['rata_sks'];
+        $stmt->close();
+
+        return round($avg ?? 0, 2);
+    }
+
+    // Import method untuk controller
+    public function importFromFile($file)
+    {
+        try {
+            $imported = 0;
+            $skipped = 0;
+            $errors = [];
+
+            // Validasi file
+            $allowedTypes = ['text/csv', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
+            if (!in_array($file['type'], $allowedTypes)) {
+                return ['success' => false, 'message' => 'Format file tidak didukung. Gunakan CSV atau Excel.'];
+            }
+
+            $fileName = $file['tmp_name'];
+            $fileExtension = pathinfo($file['name'], PATHINFO_EXTENSION);
+
+            if (strtolower($fileExtension) === 'csv') {
+                $handle = fopen($fileName, 'r');
+                if ($handle !== FALSE) {
+                    // Skip header row
+                    fgetcsv($handle);
+
+                    while (($data = fgetcsv($handle, 1000, ",")) !== FALSE) {
+                        if (count($data) >= 5) {
+                            $mataKuliahData = [
+                                'kode_mata_kuliah' => strtoupper(trim($data[0])),
+                                'nama_mata_kuliah' => trim($data[1]),
+                                'sks' => (int)$data[2],
+                                'semester' => (int)$data[3],
+                                'jurusan' => trim($data[4]),
+                                'deskripsi' => isset($data[5]) ? trim($data[5]) : '',
+                                'status' => 'active'
+                            ];
+
+                            // Validasi basic
+                            if (!empty($mataKuliahData['kode_mata_kuliah']) && !empty($mataKuliahData['nama_mata_kuliah'])) {
+                                $result = $this->createMataKuliah($mataKuliahData);
+                                if ($result['success']) {
+                                    $imported++;
+                                } else {
+                                    $skipped++;
+                                    $errors[] = "Baris dengan kode {$mataKuliahData['kode_mata_kuliah']}: " . $result['message'];
+                                }
+                            } else {
+                                $skipped++;
+                            }
+                        }
+                    }
+                    fclose($handle);
+                }
+            }
+
+            return [
+                'success' => true,
+                'imported' => $imported,
+                'skipped' => $skipped,
+                'errors' => $errors
+            ];
+        } catch (Exception $e) {
+            return ['success' => false, 'message' => 'Error saat import: ' . $e->getMessage()];
+        }
     }
 }
